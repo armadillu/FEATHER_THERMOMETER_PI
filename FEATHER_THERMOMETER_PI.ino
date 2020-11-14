@@ -2,14 +2,15 @@
 #include "DHT.h"
 #define DHTPIN 14     // what digital pin we're connected to
 #define DHTTYPE DHT22   // DHT 22  (AM2302), AM2321
+#define BLUE_LED_PIN	2
 
 // GLOBALS /////////////////////////////////////////////////////////////////////////////////
 
 float tempCelcius = 0.0f;
 float humidity = 0.0f;
 static int count = 0;
-int countMax = 1; //min - interval to send temp & humidity http updates to server
-
+int countMax = 15; //min - interval to send temp & humidity http updates to server
+const char * serverAddress = "10.0.0.176";
 
 //global devices
 DHT dht(DHTPIN, DHTTYPE);
@@ -49,7 +50,10 @@ void(* resetFunc) (void) = 0;//declare reset function at address 0
 void setup() {
 
 	pinMode(LED_BUILTIN, OUTPUT);     // Initialize the LED_BUILTIN pin as an output
-	digitalWrite(LED_BUILTIN, HIGH);
+	digitalWrite(LED_BUILTIN, HIGH); //turn off red led
+
+	pinMode(BLUE_LED_PIN, OUTPUT);     // Initialize the BLUE LED pin as an output
+	digitalWrite(BLUE_LED_PIN, HIGH);	//turn off blue led
 	
 	Serial.begin(115200);
 	Serial.println("----------------------------------------------\n");
@@ -87,17 +91,18 @@ void setup() {
 
 void loop() {
 
-	delay(1000); //once per second
+	delay(100); //once per second
 
 	updateSensorData();
 	server.handleClient();
 
 	count++;
-	if (count >= countMax * 10 || count == 0) { //every ~30 minutes, ping server with data
+	if (count >= countMax * ( 10 /* 1 sec*/) * ( 60 /* 1 min */ ) || count == 0) { //every ~countMax minutes, ping server with data
 		count = 1;
 		sendHttpData();
 	}
 }
+
 
 void updateSensorData(){
 	// Reading temperature or humidity takes about 250 milliseconds!
@@ -111,12 +116,15 @@ void updateSensorData(){
 	}
 }
 
+
 void sendHttpData() {
+
+	digitalWrite(BLUE_LED_PIN, LOW); //blink blue while we send http request
 
 	bool ok = false;
 	HTTPClient http;
 	char url[255];
-	sprintf(url, "http://10.0.0.100:8080/sensorData/send?temp=%.1f&hum=%.1f", tempCelcius, humidity);
+	sprintf(url, "http://%s:8080/sensorData/send?temp=%.1f&hum=%.1f", serverAddress, tempCelcius, humidity);
 	//Serial.println(url);
 	http.begin(url);
 	int httpCode = http.GET();
@@ -135,9 +143,13 @@ void sendHttpData() {
 			ok = true;
 		}
 	} else {
-		Serial.print("[HTTP] GET... failed, error: ");
+		Serial.print("[HTTP] GET... error: \"");
+		Serial.print(url);
+		Serial.print("\" ");
 		Serial.println(http.errorToString(httpCode).c_str());
 	}
 
 	http.end();
+	
+	digitalWrite(BLUE_LED_PIN, HIGH);
 }
