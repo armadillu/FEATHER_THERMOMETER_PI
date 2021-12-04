@@ -8,9 +8,11 @@
 
 float tempCelcius = 0.0f;
 float humidity = 0.0f;
-static int count = 0;
-int countMax = 15; //min - interval to send temp & humidity http updates to server
+static int loopCount = 999999999;
+int sleepMS = 250;
+int sendDataIntervalMin = 5; //min - interval to send temp & humidity http updates to server
 const char * serverAddress = "10.0.0.176";
+const char * configURL = "http://uri.cat/configs/SensorInterval";
 
 //global devices
 DHT dht(DHTPIN, DHTTYPE);
@@ -21,11 +23,13 @@ DHT dht(DHTPIN, DHTTYPE);
 #include <WiFiClient.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
+//#include <OSCMessage.h>
 
 #include "WifiPass.h" //define wifi SSID & pass
 //const char* ssid = "XXXXX";
 //const char* password = "XXXXX";
 
+WiFiClient wifiClient;
 ESP8266WebServer server(80);
 
 void handleRoot() {
@@ -91,18 +95,61 @@ void setup() {
 
 void loop() {
 
-	delay(100); //once per second
+	delay(sleepMS); //once per second
 
 	updateSensorData();
 	server.handleClient();
 
-	count++;
-	if (count >= countMax * ( 10 /* 1 sec*/) * ( 60 /* 1 min */ ) || count == 0) { //every ~countMax minutes, ping server with data
-		count = 1;
-		sendHttpData();
+	bool ok = true;
+	int maxLoopCount = sendDataIntervalMin * ( 1000 / sleepMS ) * ( 60 /* 1 min */ );
+	if (loopCount >= maxLoopCount) { //every ~sendDataIntervalMin minutes, ping server with data
+		ok = sendHttpData();
+		updateSendDataInterval();
+		if(ok){
+			loopCount = 1;
+		}else{
+			delay(2 * sleepMS);
+		}
 	}
+	loopCount++;
 }
 
+
+void updateSendDataInterval(){
+	int newInterval = getRefreshInterval();
+	if(newInterval != sendDataIntervalMin ){
+		Serial.print("New Send Data interval (min): ");
+		Serial.println(newInterval);
+	}
+	sendDataIntervalMin = newInterval;	
+}
+
+
+int getRefreshInterval(){
+
+	int newRefreshMin = 15;
+	HTTPClient http;
+	http.begin(wifiClient, configURL);
+	int httpCode = http.GET();
+
+	if (httpCode > 0) { 	// httpCode will be negative on error
+		String payload = http.getString();
+		newRefreshMin= payload.toInt();
+	} else {
+		Serial.print("[HTTP] GET... error: \"");
+		Serial.print(configURL);
+		Serial.print("\" ");
+		Serial.println(http.errorToString(httpCode).c_str());
+	}
+
+	http.end();
+	if(newRefreshMin < 1 || newRefreshMin > 60){
+		Serial.print("Correcting unreasonabel send data interval to 15 min: ");
+		Serial.print(newRefreshMin);
+		newRefreshMin = 15;
+	}
+	return newRefreshMin;
+}
 
 void updateSensorData(){
 	// Reading temperature or humidity takes about 250 milliseconds!
@@ -117,7 +164,7 @@ void updateSensorData(){
 }
 
 
-void sendHttpData() {
+bool sendHttpData() {
 
 	digitalWrite(BLUE_LED_PIN, LOW); //blink blue while we send http request
 
@@ -126,7 +173,7 @@ void sendHttpData() {
 	char url[255];
 	sprintf(url, "http://%s:8080/sensorData/send?temp=%.1f&hum=%.1f", serverAddress, tempCelcius, humidity);
 	//Serial.println(url);
-	http.begin(url);
+	http.begin(wifiClient, url);
 	int httpCode = http.GET();
 
 	// httpCode will be negative on error
@@ -152,4 +199,5 @@ void sendHttpData() {
 	http.end();
 	
 	digitalWrite(BLUE_LED_PIN, HIGH);
+	return ok;
 }
