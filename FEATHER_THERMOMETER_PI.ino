@@ -1,6 +1,8 @@
 //temp sensor
 #include "DHT.h"
-#define DHTPIN 14     // what digital pin we're connected to
+//#define DHTPIN 14     // what digital pin we're connected to                <<< on adafruit bluetooth feather board
+#define DHTPIN D1     // what digital pin we're connected to                  <<< one NodeMCU 1.0 board
+
 #define DHTTYPE DHT22   // DHT 22  (AM2302), AM2321
 #define BLUE_LED_PIN	2
 
@@ -29,6 +31,12 @@ DHT dht(DHTPIN, DHTTYPE);
 //const char* ssid = "XXXXX";
 //const char* password = "XXXXX";
 
+
+// HTTP /////////////////////////////////////////////////////////////////////////////////////
+#include <ESP8266HTTPClient.h>
+/////////////////////////////////////////////////////////////////////////////////////////////
+
+
 WiFiClient wifiClient;
 ESP8266WebServer server(80);
 
@@ -40,11 +48,10 @@ void handleRoot() {
 	digitalWrite(LED_BUILTIN, HIGH);
 }
 
-// HTTP /////////////////////////////////////////////////////////////////////////////////////
 
-#include <ESP8266HTTPClient.h>
-
-/////////////////////////////////////////////////////////////////////////////////////////////
+void handleMetrics() {
+	server.send(200, "text/plain", GenerateMetrics() );
+}
 
 
 // RESET 
@@ -77,19 +84,20 @@ void setup() {
 	Serial.print("IP address: ");
 	Serial.println(WiFi.localIP());
 
-	if (MDNS.begin("tempSensor")) {
-		Serial.println("MDNS responder started");
+	String ID = String(ESP.getChipId(),HEX);
+	if (MDNS.begin(ID)) {
+		Serial.println("MDNS responder started " + ID);
 	}
+
+	server.on("/", handleRoot);
+	server.on("/metrics", handleMetrics);
+	server.begin();
+	Serial.println("HTTP server started");
 
 	// Add service to MDNS-SD
 	MDNS.addService("http", "tcp", 80);
 
-	server.on("/", handleRoot);
-	server.begin();
-	Serial.println("HTTP server started");
-
 	updateSensorData();
-	sendHttpData();
 }
 
 
@@ -97,11 +105,12 @@ void loop() {
 
 	delay(sleepMS); //once per second
 
+	MDNS.update();
 	updateSensorData();
 	server.handleClient();
 
-	bool ok = true;
-	int maxLoopCount = sendDataIntervalMin * ( 1000 / sleepMS ) * ( 60 /* 1 min */ );
+/*	bool ok = true;
+	int maxLoopCount = sendDataIntervalMin * ( 1000 / sleepMS ) * ( 60 );
 	if (loopCount >= maxLoopCount) { //every ~sendDataIntervalMin minutes, ping server with data
 		ok = sendHttpData();
 		updateSendDataInterval();
@@ -112,8 +121,32 @@ void loop() {
 		}
 	}
 	loopCount++;
+*/
 }
 
+
+String GenerateMetrics() {
+  String message = "";
+  String idString = "{id=\"" + String(ESP.getChipId(),HEX) + "\",mac=\"" + WiFi.macAddress().c_str() + "\"}";
+
+    message += "# HELP temp Temperature in Cº\n";
+    message += "# TYPE temp gauge\n";
+    message += "temp";
+    message += idString;
+    message += String(tempCelcius, 2);
+    message += "\n";
+
+    message += "# HELP hum Relative Humidity\n";
+    message += "# TYPE hum gauge\n";
+    message += "hum";
+    message += idString;
+    message += String(humidity, 2);
+    message += "\n";
+
+  return message;
+}
+
+/*
 
 void updateSendDataInterval(){
 	int newInterval = getRefreshInterval();
@@ -123,7 +156,6 @@ void updateSendDataInterval(){
 	}
 	sendDataIntervalMin = newInterval;	
 }
-
 
 int getRefreshInterval(){
 
@@ -144,12 +176,13 @@ int getRefreshInterval(){
 
 	http.end();
 	if(newRefreshMin < 1 || newRefreshMin > 60){
-		Serial.print("Correcting unreasonabel send data interval to 15 min: ");
+		Serial.print("Correcting unreasonable send data interval to 15 min: ");
 		Serial.print(newRefreshMin);
 		newRefreshMin = 15;
 	}
 	return newRefreshMin;
 }
+*/
 
 void updateSensorData(){
 	// Reading temperature or humidity takes about 250 milliseconds!
@@ -163,7 +196,8 @@ void updateSensorData(){
 	}
 }
 
-
+/*
+ * 
 bool sendHttpData() {
 
 	digitalWrite(BLUE_LED_PIN, LOW); //blink blue while we send http request
@@ -201,3 +235,4 @@ bool sendHttpData() {
 	digitalWrite(BLUE_LED_PIN, HIGH);
 	return ok;
 }
+*/
