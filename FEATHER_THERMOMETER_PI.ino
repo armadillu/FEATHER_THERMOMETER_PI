@@ -41,11 +41,11 @@ WiFiClient wifiClient;
 ESP8266WebServer server(80);
 
 void handleRoot() {
-	digitalWrite(LED_BUILTIN, LOW); //note on the huzza LED low is high!
+	//digitalWrite(LED_BUILTIN, LOW); //note on the huzza LED low is high!
 	static char json[64];
 	sprintf(json, "{\"temperature\":%f, \"humidity\":%f}", tempCelcius, humidity);
 	server.send(200, "application/json", json);
-	digitalWrite(LED_BUILTIN, HIGH);
+	//digitalWrite(LED_BUILTIN, HIGH);
 }
 
 
