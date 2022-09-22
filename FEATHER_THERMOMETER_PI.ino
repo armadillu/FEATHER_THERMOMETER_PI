@@ -11,6 +11,12 @@
 #define DHTTYPE DHT22   // DHT22 (white)  DHT11 (blue)
 #define BLUE_LED_PIN	2
 
+#include <ESP8266WiFi.h>
+#include <ESP8266WebServer.h>
+#include <ESP8266mDNS.h>
+#include "WifiPass.h" //define wifi SSID & pass
+
+
 // GLOBALS /////////////////////////////////////////////////////////////////////////////////
 
 float tempCelcius = 0.0f;
@@ -20,28 +26,25 @@ float light = 0.0f;
 float tempCelcius2 = 0.0f;
 float pressurePascal = 0.0f;
 
-int sleepMS = 500;
+int sleepMS = 1000;
 
 //global devices
 DHT dht(DHTPIN, DHTTYPE);
+ESP8266WebServer server(80);
+String ID;
 
 // WIFI ////////////////////////////////////////////////////////////////////////////////////
 
-#include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h>
-#include <ESP8266mDNS.h>
-#include "WifiPass.h" //define wifi SSID & pass
 
 #if PRESSURE_ENABLED
 	#include <Adafruit_BMP085.h>
 	Adafruit_BMP085 bmp;
 #endif
 
-ESP8266WebServer server(80);
 
 void handleRoot() {
-	static char json[64];
-	sprintf(json, "{\"temperature\":%f, \"humidity\":%f}", tempCelcius, humidity);
+	static char json[128];
+	sprintf(json, "{\"ID\":\"%s\", \"temperature\":%f, \"humidity\":%f}", ID, tempCelcius, humidity);
 	server.send(200, "application/json", json);
 }
 
@@ -62,27 +65,30 @@ void setup() {
 	
 	Serial.begin(9600);
 	Serial.println("----------------------------------------------\n");
-	String ID = String(ESP.getChipId(),HEX);
+	ID = String(ESP.getChipId(),HEX);
 	Serial.printf("\nBooting %s ......\n", ID);
 	Serial.printf("HasMic:%d  HasLight:%d  HasPressure:%d\n", MIC_ENABLED, LIGHT_ENABLED, PRESSURE_ENABLED);
 	//Serial.setDebugOutput(true);
 	
 
 	WiFi.setPhyMode(WIFI_PHY_MODE_11G);
-	//WiFi.persistent(false); //These 3 lines are a required work around
-	WiFi.forceSleepWake();
-	WiFi.setSleepMode(WIFI_NONE_SLEEP);
   	//WiFi.mode(WIFI_OFF);    //otherwise the module will not reconnect
   	WiFi.mode(WIFI_STA);    //if it gets disconnected
 	WiFi.disconnect();
 	WiFi.begin(ssid, password);
+	Serial.printf("Trying to connect to %s ...\n", ssid);
 
 	while (WiFi.status() != WL_CONNECTED) { // Wait for connection
-		delay(500);
+		delay(250);
 		Serial.print(".");
 	}
 	digitalWrite(LED_BUILTIN, HIGH); //turn off red led
 	Serial.printf("\nConnected to %s IP addres %s\n", ssid, WiFi.localIP().toString().c_str());
+
+	//WiFi.setAutoReconnect(true);
+	//WiFi.persistent(true);
+	//WiFi.forceSleepWake();
+	//WiFi.setSleepMode(WIFI_NONE_SLEEP);
 
 	if (MDNS.begin(ID)) {
 		Serial.println("MDNS responder started " + ID);
@@ -105,7 +111,6 @@ void setup() {
 
 	dht.begin();
 
-
 	updateSensorData();
 }
 
@@ -116,13 +121,13 @@ void loop() {
 	
 	MDNS.update();
 	updateSensorData();
-	server.handleClient();	
+	server.handleClient();
 }
 
 
 String GenerateMetrics() {
   String message = "";
-  String idString = "{id=\"" + String(ESP.getChipId(),HEX) + "\",mac=\"" + WiFi.macAddress().c_str() + "\"}";
+  String idString = "{id=\"" + ID + "\",mac=\"" + WiFi.macAddress().c_str() + "\"}";
 
     message += "# HELP temp Temperature in C\n";
     message += "# TYPE temp gauge\n";
@@ -139,38 +144,37 @@ String GenerateMetrics() {
     message += "\n";
 
 	#if MIC_ENABLED
-    message += "# HELP loud Microphone Loudness\n";
-    message += "# TYPE loud gauge\n";
-    message += "loud";
-    message += idString;
-    message += String(loudness, 3);
-    message += "\n";
+	    message += "# HELP loud Microphone Loudness\n";
+	    message += "# TYPE loud gauge\n";
+	    message += "loud";
+	    message += idString;
+	    message += String(loudness, 3);
+	    message += "\n";
     #endif
 
     #if LIGHT_ENABLED
-    message += "# HELP light sensor brightness\n";
-    message += "# TYPE light gauge\n";
-    message += "light";
-    message += idString;
-    message += String(light, 3);
-    message += "\n";
+	    message += "# HELP light sensor brightness\n";
+	    message += "# TYPE light gauge\n";
+	    message += "light";
+	    message += idString;
+	    message += String(light, 3);
+	    message += "\n";
     #endif
 
     #if (PRESSURE_ENABLED)
-    message += "# HELP pressure Atmospheric Pressure in Pascals\n";
-    message += "# TYPE pressure gauge\n";
-    message += "pressure";
-    message += idString;
-    message += String(pressurePascal, 3);
-    message += "\n";
-
-    message += "# HELP temp2 Temperature in C\n";
-    message += "# TYPE temp2 gauge\n";
-    message += "temp2";
-    message += idString;
-    message += String(tempCelcius2, 3);
-    message += "\n";
-
+	    message += "# HELP pressure Atmospheric Pressure in Pascals\n";
+	    message += "# TYPE pressure gauge\n";
+	    message += "pressure";
+	    message += idString;
+	    message += String(pressurePascal, 3);
+	    message += "\n";
+	
+	    message += "# HELP temp2 Temperature in C\n";
+	    message += "# TYPE temp2 gauge\n";
+	    message += "temp2";
+	    message += idString;
+	    message += String(tempCelcius2, 3);
+	    message += "\n";
     #endif
 
   return message;
@@ -192,16 +196,23 @@ void updateSensorData(){
 	#if (MIC_ENABLED) //calc mic input gain //////////////////////	
 		int mn = 1024;
 		int mx = 0;
-		for (int i = 0; i < 10000; ++i) {
+		for (int i = 0; i < 10; ++i) {
 			int val = analogRead(A0);
 			mn = min(mn, val);
 			mx = max(mx, val);
+			if(i % 500 == 1){
+				yield();
+			}
 		}
 		float vol = (mx - mn) / 1024.0f;
 		if(loudness <= 0.001f){ //first value
 			loudness = vol;
 		}else{
-			loudness = 0.7f * loudness + 0.3f * vol;
+			if(vol > loudness){ //quick raise
+				loudness = vol;
+			}else{ //slow decay
+				loudness = 0.9f * loudness + 0.1f * vol;
+			}			
 		}		
 	#endif
 
@@ -214,5 +225,4 @@ void updateSensorData(){
 	tempCelcius2 = bmp.readTemperature();
 	pressurePascal = bmp.readPressure() / 100.0f;
 	#endif
-
 }
