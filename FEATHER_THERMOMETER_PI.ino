@@ -1,20 +1,26 @@
+#define MIC_ENABLED			true
+#define LIGHT_ENABLED		false
+#define PRESSURE_ENABLED	false
+
 //temp sensor
 #include "DHT.h"
-//#define DHTPIN 14     // what digital pin we're connected to                <<< on adafruit bluetooth feather board
-#define DHTPIN D1     // what digital pin we're connected to                  <<< one NodeMCU 1.0 board
+//#define DHTPIN 	14     // what digital pin we're connected to                <<< on adafruit bluetooth feather board
+#define DHTPIN 		D1 		// what digital pin we're connected to                  <<< one NodeMCU 1.0 board - D1 - 20
+//#define DHTPIN 	D4     // what digital pin we're connected to                  <<< on stacked wemos d1 mini
 
-#define DHTTYPE DHT22   // DHT 22  (AM2302), AM2321
+#define DHTTYPE DHT22   // DHT22 (white)  DHT11 (blue)
 #define BLUE_LED_PIN	2
 
 // GLOBALS /////////////////////////////////////////////////////////////////////////////////
 
 float tempCelcius = 0.0f;
 float humidity = 0.0f;
-static int loopCount = 999999999;
-int sleepMS = 250;
-int sendDataIntervalMin = 5; //min - interval to send temp & humidity http updates to server
-const char * serverAddress = "10.0.0.176";
-const char * configURL = "http://uri.cat/configs/SensorInterval";
+float loudness = 0.0f;
+float light = 0.0f;
+float tempCelcius2 = 0.0f;
+float pressurePascal = 0.0f;
+
+int sleepMS = 500;
 
 //global devices
 DHT dht(DHTPIN, DHTTYPE);
@@ -22,30 +28,21 @@ DHT dht(DHTPIN, DHTTYPE);
 // WIFI ////////////////////////////////////////////////////////////////////////////////////
 
 #include <ESP8266WiFi.h>
-#include <WiFiClient.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
-//#include <OSCMessage.h>
-
 #include "WifiPass.h" //define wifi SSID & pass
-//const char* ssid = "XXXXX";
-//const char* password = "XXXXX";
 
+#if PRESSURE_ENABLED
+	#include <Adafruit_BMP085.h>
+	Adafruit_BMP085 bmp;
+#endif
 
-// HTTP /////////////////////////////////////////////////////////////////////////////////////
-#include <ESP8266HTTPClient.h>
-/////////////////////////////////////////////////////////////////////////////////////////////
-
-
-WiFiClient wifiClient;
 ESP8266WebServer server(80);
 
 void handleRoot() {
-	//digitalWrite(LED_BUILTIN, LOW); //note on the huzza LED low is high!
 	static char json[64];
 	sprintf(json, "{\"temperature\":%f, \"humidity\":%f}", tempCelcius, humidity);
 	server.send(200, "application/json", json);
-	//digitalWrite(LED_BUILTIN, HIGH);
 }
 
 
@@ -61,30 +58,32 @@ void(* resetFunc) (void) = 0;//declare reset function at address 0
 void setup() {
 
 	pinMode(LED_BUILTIN, OUTPUT);     // Initialize the LED_BUILTIN pin as an output
-	digitalWrite(LED_BUILTIN, HIGH); //turn off red led
-
-	pinMode(BLUE_LED_PIN, OUTPUT);     // Initialize the BLUE LED pin as an output
-	digitalWrite(BLUE_LED_PIN, HIGH);	//turn off blue led
+	pinMode(A0, INPUT);
 	
-	Serial.begin(115200);
+	Serial.begin(9600);
 	Serial.println("----------------------------------------------\n");
+	String ID = String(ESP.getChipId(),HEX);
+	Serial.printf("\nBooting %s ......\n", ID);
+	Serial.printf("HasMic:%d  HasLight:%d  HasPressure:%d\n", MIC_ENABLED, LIGHT_ENABLED, PRESSURE_ENABLED);
+	//Serial.setDebugOutput(true);
+	
 
-	dht.begin();
-
-	WiFi.mode(WIFI_STA);
+	WiFi.setPhyMode(WIFI_PHY_MODE_11G);
+	//WiFi.persistent(false); //These 3 lines are a required work around
+	WiFi.forceSleepWake();
+	WiFi.setSleepMode(WIFI_NONE_SLEEP);
+  	//WiFi.mode(WIFI_OFF);    //otherwise the module will not reconnect
+  	WiFi.mode(WIFI_STA);    //if it gets disconnected
+	WiFi.disconnect();
 	WiFi.begin(ssid, password);
 
 	while (WiFi.status() != WL_CONNECTED) { // Wait for connection
 		delay(500);
 		Serial.print(".");
 	}
-	Serial.println("");
-	Serial.print("Connected to ");
-	Serial.println(ssid);
-	Serial.print("IP address: ");
-	Serial.println(WiFi.localIP());
+	digitalWrite(LED_BUILTIN, HIGH); //turn off red led
+	Serial.printf("\nConnected to %s IP addres %s\n", ssid, WiFi.localIP().toString().c_str());
 
-	String ID = String(ESP.getChipId(),HEX);
 	if (MDNS.begin(ID)) {
 		Serial.println("MDNS responder started " + ID);
 	}
@@ -97,6 +96,16 @@ void setup() {
 	// Add service to MDNS-SD
 	MDNS.addService("http", "tcp", 80);
 
+	#if PRESSURE_ENABLED
+	if (!bmp.begin()) {
+		Serial.println("Could not find a valid BMP085 sensor, check wiring! Resetting!");
+		resetFunc(); //sensor is acting up - force hw reset!
+  	}
+  	#endif
+
+	dht.begin();
+
+
 	updateSensorData();
 }
 
@@ -104,24 +113,10 @@ void setup() {
 void loop() {
 
 	delay(sleepMS); //once per second
-
+	
 	MDNS.update();
 	updateSensorData();
-	server.handleClient();
-
-/*	bool ok = true;
-	int maxLoopCount = sendDataIntervalMin * ( 1000 / sleepMS ) * ( 60 );
-	if (loopCount >= maxLoopCount) { //every ~sendDataIntervalMin minutes, ping server with data
-		ok = sendHttpData();
-		updateSendDataInterval();
-		if(ok){
-			loopCount = 1;
-		}else{
-			delay(2 * sleepMS);
-		}
-	}
-	loopCount++;
-*/
+	server.handleClient();	
 }
 
 
@@ -129,62 +124,61 @@ String GenerateMetrics() {
   String message = "";
   String idString = "{id=\"" + String(ESP.getChipId(),HEX) + "\",mac=\"" + WiFi.macAddress().c_str() + "\"}";
 
-    message += "# HELP temp Temperature in Cº\n";
+    message += "# HELP temp Temperature in C\n";
     message += "# TYPE temp gauge\n";
     message += "temp";
     message += idString;
-    message += String(tempCelcius, 2);
+    message += String(tempCelcius, 3);
     message += "\n";
 
     message += "# HELP hum Relative Humidity\n";
     message += "# TYPE hum gauge\n";
     message += "hum";
     message += idString;
-    message += String(humidity, 2);
+    message += String(humidity, 3);
     message += "\n";
+
+	#if MIC_ENABLED
+    message += "# HELP loud Microphone Loudness\n";
+    message += "# TYPE loud gauge\n";
+    message += "loud";
+    message += idString;
+    message += String(loudness, 3);
+    message += "\n";
+    #endif
+
+    #if LIGHT_ENABLED
+    message += "# HELP light sensor brightness\n";
+    message += "# TYPE light gauge\n";
+    message += "light";
+    message += idString;
+    message += String(light, 3);
+    message += "\n";
+    #endif
+
+    #if (PRESSURE_ENABLED)
+    message += "# HELP pressure Atmospheric Pressure in Pascals\n";
+    message += "# TYPE pressure gauge\n";
+    message += "pressure";
+    message += idString;
+    message += String(pressurePascal, 3);
+    message += "\n";
+
+    message += "# HELP temp2 Temperature in C\n";
+    message += "# TYPE temp2 gauge\n";
+    message += "temp2";
+    message += idString;
+    message += String(tempCelcius2, 3);
+    message += "\n";
+
+    #endif
 
   return message;
 }
 
-/*
-
-void updateSendDataInterval(){
-	int newInterval = getRefreshInterval();
-	if(newInterval != sendDataIntervalMin ){
-		Serial.print("New Send Data interval (min): ");
-		Serial.println(newInterval);
-	}
-	sendDataIntervalMin = newInterval;	
-}
-
-int getRefreshInterval(){
-
-	int newRefreshMin = 15;
-	HTTPClient http;
-	http.begin(wifiClient, configURL);
-	int httpCode = http.GET();
-
-	if (httpCode > 0) { 	// httpCode will be negative on error
-		String payload = http.getString();
-		newRefreshMin= payload.toInt();
-	} else {
-		Serial.print("[HTTP] GET... error: \"");
-		Serial.print(configURL);
-		Serial.print("\" ");
-		Serial.println(http.errorToString(httpCode).c_str());
-	}
-
-	http.end();
-	if(newRefreshMin < 1 || newRefreshMin > 60){
-		Serial.print("Correcting unreasonable send data interval to 15 min: ");
-		Serial.print(newRefreshMin);
-		newRefreshMin = 15;
-	}
-	return newRefreshMin;
-}
-*/
 
 void updateSensorData(){
+
 	// Reading temperature or humidity takes about 250 milliseconds!
 	// Sensor readings may also be up to 2 seconds 'old' (its a very slow sensor)
 	humidity = dht.readHumidity();
@@ -194,45 +188,31 @@ void updateSensorData(){
 		Serial.println("Can't read from sensor! Resetting!");
 		resetFunc(); //sensor is acting up - force hw reset!
 	}
-}
 
-/*
- * 
-bool sendHttpData() {
-
-	digitalWrite(BLUE_LED_PIN, LOW); //blink blue while we send http request
-
-	bool ok = false;
-	HTTPClient http;
-	char url[255];
-	sprintf(url, "http://%s:8080/sensorData/send?temp=%.1f&hum=%.1f", serverAddress, tempCelcius, humidity);
-	//Serial.println(url);
-	http.begin(wifiClient, url);
-	int httpCode = http.GET();
-
-	// httpCode will be negative on error
-	if (httpCode > 0) {
-		// HTTP header has been send and Server response header has been handled
-		Serial.print("http code: ");
-		Serial.println(httpCode);
-
-		// file found at server
-		if (httpCode == HTTP_CODE_OK) {
-			String payload = http.getString();
-			Serial.print("Response: ");
-			Serial.println(payload);
-			ok = true;
+	#if (MIC_ENABLED) //calc mic input gain //////////////////////	
+		int mn = 1024;
+		int mx = 0;
+		for (int i = 0; i < 10000; ++i) {
+			int val = analogRead(A0);
+			mn = min(mn, val);
+			mx = max(mx, val);
 		}
-	} else {
-		Serial.print("[HTTP] GET... error: \"");
-		Serial.print(url);
-		Serial.print("\" ");
-		Serial.println(http.errorToString(httpCode).c_str());
-	}
+		float vol = (mx - mn) / 1024.0f;
+		if(loudness <= 0.001f){ //first value
+			loudness = vol;
+		}else{
+			loudness = 0.7f * loudness + 0.3f * vol;
+		}		
+	#endif
 
-	http.end();
+	#if (LIGHT_ENABLED) //calc mic input gain //////////////////////	
+		light = analogRead(A0) / 1024.0f;
+	#endif
 	
-	digitalWrite(BLUE_LED_PIN, HIGH);
-	return ok;
+
+	#if (PRESSURE_ENABLED)
+	tempCelcius2 = bmp.readTemperature();
+	pressurePascal = bmp.readPressure() / 100.0f;
+	#endif
+
 }
-*/
