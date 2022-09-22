@@ -196,11 +196,11 @@ void updateSensorData(){
 	#if (MIC_ENABLED) //calc mic input gain //////////////////////	
 		int mn = 1024;
 		int mx = 0;
-		for (int i = 0; i < 10; ++i) {
+		for (int i = 0; i < 10000; ++i) {
 			int val = analogRead(A0);
 			mn = min(mn, val);
 			mx = max(mx, val);
-			if(i % 500 == 1){
+			if(i % 2000 == 0){
 				yield();
 			}
 		}
