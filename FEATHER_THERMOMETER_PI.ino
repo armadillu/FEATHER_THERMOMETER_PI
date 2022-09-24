@@ -1,6 +1,7 @@
 #define MIC_ENABLED			true
 #define LIGHT_ENABLED		false
 #define PRESSURE_ENABLED	false
+#define BONJOUR				false
 
 //temp sensor
 #include "DHT.h"
@@ -13,7 +14,9 @@
 
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
-#include <ESP8266mDNS.h>
+#if BONJOUR
+	#include <ESP8266mDNS.h>
+#endif
 #include "WifiPass.h" //define wifi SSID & pass
 
 
@@ -26,7 +29,7 @@ float light = 0.0f;
 float tempCelcius2 = 0.0f;
 float pressurePascal = 0.0f;
 
-int sleepMS = 100;
+int sleepMS = 300;
 
 //global devices
 DHT dht(DHTPIN, DHTTYPE);
@@ -71,7 +74,7 @@ void setup() {
 	//Serial.setDebugOutput(true);
 	
 
-	WiFi.setPhyMode(WIFI_PHY_MODE_11G);
+	//WiFi.setPhyMode(WIFI_PHY_MODE_11G);
   	//WiFi.mode(WIFI_OFF);    //otherwise the module will not reconnect
   	WiFi.mode(WIFI_STA);    //if it gets disconnected
 	WiFi.disconnect();
@@ -90,17 +93,21 @@ void setup() {
 	//WiFi.forceSleepWake();
 	//WiFi.setSleepMode(WIFI_NONE_SLEEP);
 
+	#if BONJOUR
 	if (MDNS.begin(ID)) {
 		Serial.println("MDNS responder started " + ID);
 	}
+	#endif
 
 	server.on("/", handleRoot);
 	server.on("/metrics", handleMetrics);
 	server.begin();
 	Serial.println("HTTP server started");
 
-	// Add service to MDNS-SD
-	MDNS.addService("http", "tcp", 80);
+	#if BONJOUR
+		// Add service to MDNS-SD
+		MDNS.addService("http", "tcp", 80);
+	#endif
 
 	#if PRESSURE_ENABLED
 	if (!bmp.begin()) {
@@ -119,7 +126,9 @@ void loop() {
 
 	delay(sleepMS); //once per second
 	
-	MDNS.update();
+	#if BONJOUR
+		MDNS.update();
+	#endif
 	updateSensorData();
 	server.handleClient();
 }
@@ -196,11 +205,11 @@ void updateSensorData(){
 	#if (MIC_ENABLED) //calc mic input gain //////////////////////	
 		int mn = 1024;
 		int mx = 0;
-		for (int i = 0; i < 30000; ++i) {
+		for (int i = 0; i < 10000; ++i) {
 			int val = analogRead(A0);
 			mn = min(mn, val);
 			mx = max(mx, val);
-			if(i % 10000 == 0){
+			if(i % 500 == 0){
 				yield();
 			}
 		}
