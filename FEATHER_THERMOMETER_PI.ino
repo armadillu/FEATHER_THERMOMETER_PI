@@ -26,7 +26,7 @@ float light = 0.0f;
 float tempCelcius2 = 0.0f;
 float pressurePascal = 0.0f;
 
-int sleepMS = 1000;
+int sleepMS = 100;
 
 //global devices
 DHT dht(DHTPIN, DHTTYPE);
@@ -196,24 +196,16 @@ void updateSensorData(){
 	#if (MIC_ENABLED) //calc mic input gain //////////////////////	
 		int mn = 1024;
 		int mx = 0;
-		for (int i = 0; i < 10000; ++i) {
+		for (int i = 0; i < 30000; ++i) {
 			int val = analogRead(A0);
 			mn = min(mn, val);
 			mx = max(mx, val);
-			if(i % 2000 == 0){
+			if(i % 10000 == 0){
 				yield();
 			}
 		}
-		float vol = (mx - mn) / 1024.0f;
-		if(loudness <= 0.001f){ //first value
-			loudness = vol;
-		}else{
-			if(vol > loudness){ //quick raise
-				loudness = vol;
-			}else{ //slow decay
-				loudness = 0.9f * loudness + 0.1f * vol;
-			}			
-		}		
+		loudness  = 2.0f * (mx - mn) / 1024.0f; //note 2X gain to get a little more contrast
+		//Serial.printf("loud: %f\n", loudness);
 	#endif
 
 	#if (LIGHT_ENABLED) //calc mic input gain //////////////////////	
