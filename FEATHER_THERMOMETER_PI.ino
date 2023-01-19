@@ -2,11 +2,12 @@
 #define LIGHT_ENABLED		false
 #define PRESSURE_ENABLED	false
 #define BONJOUR				false
+#define OTA_UPDATE			false
 
 //temp sensor
 #include "DHT.h"
 //#define DHTPIN 	14     // what digital pin we're connected to                <<< on adafruit bluetooth feather board
-#define DHTPIN 		D1 		// what digital pin we're connected to                  <<< one NodeMCU 1.0 board - D1 - 20
+#define DHTPIN 		D1 		// what digital pin we're connected to                  <<< one NodeMCU 1.0 board (D1==20)
 //#define DHTPIN 	D4     // what digital pin we're connected to                  <<< on stacked wemos d1 mini
 
 #define DHTTYPE DHT22   // DHT22 (white)  DHT11 (blue)
@@ -14,11 +15,12 @@
 
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
-#if BONJOUR
-	#include <ESP8266mDNS.h>
-#endif
+#include <ESP8266mDNS.h>
 #include "WifiPass.h" //define wifi SSID & pass
 
+#if OTA_UPDATE
+	#include <ArduinoOTA.h>
+#endif
 
 // GLOBALS /////////////////////////////////////////////////////////////////////////////////
 
@@ -29,7 +31,7 @@ float light = 0.0f;
 float tempCelcius2 = 0.0f;
 float pressurePascal = 0.0f;
 
-int sleepMS = 300;
+int sleepMS = 400;
 
 //global devices
 DHT dht(DHTPIN, DHTTYPE);
@@ -53,7 +55,7 @@ void handleRoot() {
 
 
 void handleMetrics() {
-	server.send(200, "text/plain", GenerateMetrics() );
+	server.send(200, "text/plain", GenerateMetrics());	
 }
 
 
@@ -63,35 +65,43 @@ void(* resetFunc) (void) = 0;//declare reset function at address 0
 
 void setup() {
 
-	pinMode(LED_BUILTIN, OUTPUT);     // Initialize the LED_BUILTIN pin as an output
+	pinMode(LED_BUILTIN, OUTPUT);     	//Initialize the LED_BUILTIN pin as an output
+	digitalWrite(LED_BUILTIN, LOW); 	//turn on red led
 	pinMode(A0, INPUT);
 	
 	Serial.begin(9600);
 	Serial.println("----------------------------------------------\n");
 	ID = String(ESP.getChipId(),HEX);
 	Serial.printf("\nBooting %s ......\n", ID);
-	Serial.printf("HasMic:%d  HasLight:%d  HasPressure:%d\n", MIC_ENABLED, LIGHT_ENABLED, PRESSURE_ENABLED);
+	Serial.printf("HasMic:%d  HasLight:%d  HasPressure:%d  HasOTA:%d  Bonjour:%d\n", MIC_ENABLED, LIGHT_ENABLED, PRESSURE_ENABLED, OTA_UPDATE, BONJOUR);
 	//Serial.setDebugOutput(true);
 	
 
-	//WiFi.setPhyMode(WIFI_PHY_MODE_11G);
+	WiFi.setPhyMode(WIFI_PHY_MODE_11N);
   	//WiFi.mode(WIFI_OFF);    //otherwise the module will not reconnect
   	WiFi.mode(WIFI_STA);    //if it gets disconnected
 	WiFi.disconnect();
+
 	WiFi.begin(ssid, password);
 	Serial.printf("Trying to connect to %s ...\n", ssid);
-
-	while (WiFi.status() != WL_CONNECTED) { // Wait for connection
-		delay(250);
-		Serial.print(".");
+	int wifiAtempts = 0;
+	while (WiFi.waitForConnectResult() != WL_CONNECTED) {
+    	delay(500);
+    	Serial.print(".");
+    	wifiAtempts++;
+    	if(wifiAtempts > 10){
+    		Serial.printf("\nFailed to connect! Rebooting!\n");
+    		digitalWrite(LED_BUILTIN, HIGH); //turn off red led
+			ESP.restart();
+    	}
 	}
 	digitalWrite(LED_BUILTIN, HIGH); //turn off red led
 	Serial.printf("\nConnected to %s IP addres %s\n", ssid, WiFi.localIP().toString().c_str());
 
-	//WiFi.setAutoReconnect(true);
+	WiFi.setAutoReconnect(true);
 	//WiFi.persistent(true);
 	//WiFi.forceSleepWake();
-	//WiFi.setSleepMode(WIFI_NONE_SLEEP);
+	WiFi.setSleepMode(WIFI_NONE_SLEEP);
 
 	#if BONJOUR
 	if (MDNS.begin(ID)) {
@@ -116,8 +126,11 @@ void setup() {
   	}
   	#endif
 
-	dht.begin();
+  	#if OTA_UPDATE
+  		setupOTA();
+  	#endif
 
+	dht.begin();
 	updateSensorData();
 }
 
@@ -131,6 +144,10 @@ void loop() {
 	#endif
 	updateSensorData();
 	server.handleClient();
+
+	#if OTA_UPDATE
+		ArduinoOTA.handle();
+	#endif
 }
 
 
@@ -205,15 +222,12 @@ void updateSensorData(){
 	#if (MIC_ENABLED) //calc mic input gain //////////////////////	
 		int mn = 1024;
 		int mx = 0;
-		for (int i = 0; i < 10000; ++i) {
+		for (int i = 0; i < 2000; ++i) {
 			int val = analogRead(A0);
 			mn = min(mn, val);
 			mx = max(mx, val);
-			if(i % 500 == 0){
-				yield();
-			}
 		}
-		loudness  = 2.0f * (mx - mn) / 1024.0f; //note 2X gain to get a little more contrast
+		loudness = (mx - mn) / 1024.0f; //note 2X gain to get a little more contrast
 		//Serial.printf("loud: %f\n", loudness);
 	#endif
 
@@ -227,3 +241,46 @@ void updateSensorData(){
 	pressurePascal = bmp.readPressure() / 100.0f;
 	#endif
 }
+
+///////////////// OTA UPDATES //////////////////////////////////////////////////////
+
+#if OTA_UPDATE
+void setupOTA(){
+	ArduinoOTA.onStart([]() {
+		String type;
+		if (ArduinoOTA.getCommand() == U_FLASH) {
+			type = "sketch";
+		} else { // U_FS
+			type = "filesystem";
+		}
+	
+		// NOTE: if updating FS this would be the place to unmount FS using FS.end()
+		Serial.println("Start updating " + type);
+	});
+	
+	ArduinoOTA.onEnd([]() {
+		Serial.println("\nEnd");
+	});
+	
+	ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+		Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+	});
+	
+	ArduinoOTA.onError([](ota_error_t error) {
+		Serial.printf("Error[%u]: ", error);
+		if (error == OTA_AUTH_ERROR) {
+		Serial.println("Auth Failed");
+		} else if (error == OTA_BEGIN_ERROR) {
+		Serial.println("Begin Failed");
+		} else if (error == OTA_CONNECT_ERROR) {
+		Serial.println("Connect Failed");
+		} else if (error == OTA_RECEIVE_ERROR) {
+		Serial.println("Receive Failed");
+		} else if (error == OTA_END_ERROR) {
+		Serial.println("End Failed");
+		}
+	});
+	
+	ArduinoOTA.begin();
+}
+#endif
