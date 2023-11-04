@@ -1,21 +1,25 @@
-#define MIC_ENABLED false
+// BEGIN CONFIG ///////////////////////////////////////////////////////////////////////////
+#define MIC_ENABLED true
 #define LIGHT_ENABLED false /*light sensor connected to A0*/
 #define PRESSURE_ENABLED false
 #define BONJOUR false
 #define OTA_UPDATE false
-#define DALLAS_ENABLED true
+#define DALLAS_ENABLED false
 
-#define TEMP_CELCIUS_OFFSET -0.0 /*cheap wonky sensor calibration offset */
-#define HUMIDITY_OFFSET 0      /*cheap wonky sensor calibration offset */
+#define TEMP_CELCIUS_OFFSET -3.0 /*cheap wonky sensor calibration offset */
+#define HUMIDITY_OFFSET 0.0      /*cheap wonky sensor calibration offset */
 
 //temp sensor
 #include "DHT.h"
-#define DHTPIN 	14     // what digital pin we're connected to                <<< on adafruit bluetooth feather board
-//#define DHTPIN D1  // what digital pin we're connected to                  <<< one NodeMCU 1.0 board (D1==20)
-//#define DHTPIN 	D1     // what digital pin we're connected to                  <<< on stacked wemos d1 mini
+//#define DHTPIN 	14     // what digital pin we're connected to                <<< on adafruit bluetooth feather board
+#define DHTPIN D1  // what digital pin we're connected to                  <<< one NodeMCU 1.0 board (D1==20)
+//#define DHTPIN 	D4     // what digital pin we're connected to                  <<< on stacked wemos d1 mini
 
 #define DHTTYPE DHT22  // DHT22 (white)  DHT11 (blue)
 #define BLUE_LED_PIN 2
+#define SPEAKER_PIN D8
+
+// END CONFIG //////////////////////////////////////////////////////////////////////////////
 
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
@@ -62,6 +66,8 @@ String ID;
 Adafruit_BMP085 bmp;
 #endif
 
+void (*resetFunc)(void) = 0;  //declare reset function at address 0
+void playTune();
 
 void handleRoot() {
   static char json[128];
@@ -69,14 +75,14 @@ void handleRoot() {
   server.send(200, "application/json", json);
 }
 
-
 void handleMetrics() {
   server.send(200, "text/plain", GenerateMetrics());
 }
 
-
-// RESET
-void (*resetFunc)(void) = 0;  //declare reset function at address 0
+void handleBeep(){
+  server.send(200, "text/plain", "BEEP OK\n");
+  playTune(); delay(500); playTune();
+}
 
 
 void setup() {
@@ -84,7 +90,7 @@ void setup() {
   pinMode(LED_BUILTIN, OUTPUT);    //Initialize the LED_BUILTIN pin as an output
   digitalWrite(LED_BUILTIN, LOW);  //turn on red led
   pinMode(A0, INPUT);
-
+  
   Serial.flush();
   Serial.begin(19200);
   Serial.flush();
@@ -94,7 +100,6 @@ void setup() {
   Serial.printf("HasMic:%d  HasLight:%d  HasPressure:%d  Dallas:%d  HasOTA:%d  Bonjour:%d\n", MIC_ENABLED, LIGHT_ENABLED, PRESSURE_ENABLED, DALLAS_ENABLED, OTA_UPDATE, BONJOUR);
   Serial.printf("TempSensorOffset: %.1f  HumiditySensorOffset: %.1f\n", TEMP_CELCIUS_OFFSET, HUMIDITY_OFFSET);
   //Serial.setDebugOutput(true);
-
 
   WiFi.setPhyMode(WIFI_PHY_MODE_11G);
   //WiFi.mode(WIFI_OFF);    //otherwise the module will not reconnect
@@ -130,6 +135,7 @@ void setup() {
 
   server.on("/", handleRoot);
   server.on("/metrics", handleMetrics);
+  server.on("/beep", handleBeep);
   server.begin();
   Serial.println("HTTP server started");
 
@@ -238,6 +244,20 @@ String GenerateMetrics() {
   return message;
 }
 
+void playTune(){
+
+  Serial.println("playTune()");
+  int melody[] = {
+    523, 1047, 2093, 2093
+  };
+
+  for (int thisNote = 0; thisNote < 4; thisNote++) {
+    int noteDuration = 200;
+    tone(SPEAKER_PIN, melody[thisNote], noteDuration);
+    delay(noteDuration);
+    noTone(SPEAKER_PIN); // stop the tone playing:
+  }
+}
 
 void updateSensorData() {
 
