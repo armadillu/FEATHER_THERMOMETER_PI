@@ -1,13 +1,16 @@
 // BEGIN CONFIG ///////////////////////////////////////////////////////////////////////////
-#define MIC_ENABLED false
-#define LIGHT_ENABLED false    /*light sensor connected to A0*/
-#define PRESSURE_ENABLED false /*atmospheric pressure sensor BMP085*/
+#define MIC_ENABLED false       /* mic connected on A0 pin */
+#define LIGHT_ENABLED false    /* light sensor connected to A0 */
+#define PRESSURE_ENABLED false /* atmospheric pressure sensor BMP085 */
+#define DALLAS_ENABLED false /* long wire waterproof thermometer */
+#define RGB_PIXEL_ENABLED true /* RGB led shows co2 leve of the house by querying co2 sensor through http*/
+
+#define TEMP_CELCIUS_OFFSET -5.5 /*cheap wonky sensor calibration offset */
+#define HUMIDITY_OFFSET 10.0     /*cheap wonky sensor calibration offset */
+#define RGB_LED_BRIGHTNESS 254 /*0..255*/
+
 #define BONJOUR false
 #define OTA_UPDATE false
-#define DALLAS_ENABLED false /* long wire waterproof thermometer */
-
-#define TEMP_CELCIUS_OFFSET -4.5 /*cheap wonky sensor calibration offset */
-#define HUMIDITY_OFFSET 10.0     /*cheap wonky sensor calibration offset */
 
 //temp sensor
 #include "DHT.h"
@@ -51,7 +54,8 @@ float pressurePascal = 0.0f;
 float tempCelcius2 = 0.0f;
 float tempDallas = 0.0f;
 
-int sleepMS = 1000;
+int sleepMS = 500;
+int loopCounter = -1;
 
 //global devices
 DHT dht(DHTPIN, DHTTYPE);
@@ -66,18 +70,51 @@ String ID;
 Adafruit_BMP085 bmp;
 #endif
 
+#if RGB_PIXEL_ENABLED
+#include <Adafruit_NeoPixel.h>
+#include <ESP8266HTTPClient.h>
+Adafruit_NeoPixel pixels = Adafruit_NeoPixel(1, D2, NEO_GRB + NEO_KHZ800);
+#endif
+
 void (*resetFunc)(void) = 0;  //declare reset function at address 0
 void playTune();
 
 void handleRoot() {
-	static char json[128];
-	sprintf(json, "{\"ID\":\"%s\", \"temperature\":%f, \"humidity\":%f}", ID, tempCelcius, humidity);
-	server.send(200, "application/json", json);
+
+  String str = "{\"ID\":\"" + ID + "\", \"temperature\":" + String(tempCelcius, 2) + ", \"humidity\":" + String(humidity, 2);
+  
+  #if DALLAS_ENABLED
+  str +=  " ,\"tempDallas\": " + String(tempDallas,2);
+  #endif
+
+  #if MIC_ENABLED
+  str +=  " ,\"loudness\": " + String(loudness,2);
+  #endif
+
+  #if PRESSURE_ENABLED
+  str +=  " ,\"pressure\": " + String(pressurePascal,2);
+  #endif
+
+  #if LIGHT_ENABLED
+  str +=  " ,\"light\": " + String(light,2);
+  #endif
+  
+  str += str + " }";
+
+	server.send(200, "application/json", str.c_str());
 }
 
 void handleMetrics() {
 	server.send(200, "text/plain", GenerateMetrics());
 }
+
+#if DALLAS_ENABLED
+void handlePool() {
+  String str = "{\"temperature\":" + String(tempDallas, 2) + ", \"humidity\": 0.0 }" ;
+	server.send(200, "application/json", str.c_str());
+}
+#endif
+
 
 void handleBeep() {
 	server.send(200, "text/plain", "BEEP OK\n");
@@ -129,37 +166,49 @@ void setup() {
 	//WiFi.forceSleepWake();
 	WiFi.setSleepMode(WIFI_NONE_SLEEP);
 
-#if BONJOUR
+  #if BONJOUR
 	if (MDNS.begin(ID)) {
 		Serial.println("MDNS responder started " + ID);
 	}
-#endif
+  #endif
 
 	server.on("/", handleRoot);
 	server.on("/metrics", handleMetrics);
 	server.on("/beep", handleBeep);
+  
+  #if DALLAS_ENABLED
+  server.on("/pool", handlePool);
+  #endif
+
 	server.begin();
 	Serial.println("HTTP server started");
 
-#if BONJOUR
+  #if BONJOUR
 	// Add service to MDNS-SD
 	MDNS.addService("http", "tcp", 80);
-#endif
+  #endif
 
-#if PRESSURE_ENABLED
+  #if PRESSURE_ENABLED
 	if (!bmp.begin()) {
 		Serial.println("Could not find a valid BMP085 sensor, check wiring! Resetting!");
 		resetFunc();  //sensor is acting up - force hw reset!
 	}
-#endif
+  #endif
 
-#if OTA_UPDATE
+  #if OTA_UPDATE
 	setupOTA();
-#endif
+  #endif
 
-#if DALLAS_ENABLED
+  #if DALLAS_ENABLED
 	dallasTempSensor.begin();
-#endif
+  #endif
+
+  #if RGB_PIXEL_ENABLED
+  pixels.begin();
+  pixels.setPixelColor(0, pixels.Color(0,0,0));
+  pixels.setBrightness(RGB_LED_BRIGHTNESS);
+  pixels.show();
+  #endif
 
 	dht.begin();
 	delay(sleepMS / 2);
@@ -172,20 +221,62 @@ void setup() {
 
 
 void loop() {
-
 	delay(sleepMS);  //once per second
 
-#if BONJOUR
+  #if BONJOUR
 	MDNS.update();
-#endif
-	updateSensorData();
+  #endif
+	
+  updateSensorData();
 	server.handleClient();
 
-#if OTA_UPDATE
+  #if OTA_UPDATE
 	ArduinoOTA.handle();
-#endif
+  #endif
+
+  #if RGB_PIXEL_ENABLED
+    loopCounter++;
+    if(loopCounter > 10000) loopCounter = 0;
+    if(loopCounter % 60 == 0){
+      handleCo2Led();
+    }
+  #endif
 }
 
+#if RGB_PIXEL_ENABLED
+void handleCo2Led(){
+  Serial.println("handleCo2Led()");
+  WiFiClient client;
+  HTTPClient http;
+  http.begin(client, "http://10.0.0.104/co2"); //connect to co2 device, ask for co2 level
+  int httpResponseCode = http.GET();
+  pixels.setPixelColor(0, pixels.Color(0,0,0));
+
+  if (httpResponseCode == 200) {
+    int co2Level = http.getString().toInt();
+    //Serial.printf("co2: %d\n", co2Level);
+
+    if(co2Level > 0){
+      if(co2Level < 600){
+        pixels.setPixelColor(0, pixels.Color(0,255,0));
+      }else if(co2Level < 800){
+        pixels.setPixelColor(0, pixels.Color(128,255,0));
+      }else if(co2Level < 800){
+        pixels.setPixelColor(0, pixels.Color(255,255,0));
+      }else if(co2Level < 900){
+        pixels.setPixelColor(0, pixels.Color(255,128,0));
+      }else if(co2Level < 1000){
+        pixels.setPixelColor(0, pixels.Color(255,0,0));
+      }else if(co2Level < 1100){
+        pixels.setPixelColor(0, pixels.Color(255,0,128));
+      }else{
+        pixels.setPixelColor(0, pixels.Color(255,0,255));
+      }      
+    }
+  }
+  pixels.show();
+}
+#endif
 
 String GenerateMetrics() {
 	String message = "";
@@ -205,25 +296,25 @@ String GenerateMetrics() {
 	message += String(humidity, 3);
 	message += "\n";
 
-#if MIC_ENABLED
+  #if MIC_ENABLED
 	message += "# HELP loud Microphone Loudness\n";
 	message += "# TYPE loud gauge\n";
 	message += "loud";
 	message += idString;
 	message += String(loudness, 3);
 	message += "\n";
-#endif
+  #endif
 
-#if LIGHT_ENABLED
+  #if LIGHT_ENABLED
 	message += "# HELP light sensor brightness\n";
 	message += "# TYPE light gauge\n";
 	message += "light";
 	message += idString;
 	message += String(light, 3);
 	message += "\n";
-#endif
+  #endif
 
-#if PRESSURE_ENABLED
+  #if PRESSURE_ENABLED
 	message += "# HELP pressure Atmospheric Pressure in Pascals\n";
 	message += "# TYPE pressure gauge\n";
 	message += "pressure";
@@ -237,16 +328,16 @@ String GenerateMetrics() {
 	message += idString;
 	message += String(tempCelcius2, 3);
 	message += "\n";
-#endif
+  #endif
 
-#if DALLAS_ENABLED
+  #if DALLAS_ENABLED
 	message += "# HELP tempDallas Temperature in C\n";
 	message += "# TYPE tempDallas gauge\n";
 	message += "tempDallas";
 	message += idString;
 	message += String(tempDallas, 3);
 	message += "\n";
-#endif
+  #endif
 
 	return message;
 }
@@ -323,7 +414,7 @@ void updateSensorData() {
 		mx = max(mx, val);
 	}
 	loudness = (mx - mn) / 1024.0f;  //note 2X gain to get a little more contrast
-	                                 //Serial.printf("loud: %f\n", loudness);
+	//Serial.printf("loud: %f\n", loudness);
 #endif
 
 #if (LIGHT_ENABLED)  //calc mic input gain //////////////////////
