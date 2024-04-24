@@ -1,25 +1,38 @@
+/* Choose NodeMCU 0.9 board in arduino MENU no matter what board you have (adafruit feather, nodemcu, wemos d1 mini) */
+
 // BEGIN CONFIG ///////////////////////////////////////////////////////////////////////////
+#define BONJOUR false
+#define OTA_UPDATE false
+//
 #define MIC_ENABLED false       /* mic connected on A0 pin */
 #define LIGHT_ENABLED false    /* light sensor connected to A0 */
 #define PRESSURE_ENABLED false /* atmospheric pressure sensor BMP085 */
 #define DALLAS_ENABLED false /* long wire waterproof thermometer */
-#define RGB_PIXEL_ENABLED true /* RGB led shows co2 leve of the house by querying co2 sensor through http*/
-
-#define TEMP_CELCIUS_OFFSET -5.5 /*cheap wonky sensor calibration offset */
-#define HUMIDITY_OFFSET 10.0     /*cheap wonky sensor calibration offset */
+#define RGB_PIXEL_ENABLED false /* RGB led shows co2 leve of the house by querying co2 sensor through http*/
+#define RAIN_SENSOR_ENABLED false 
+//
+#define TEMP_CELCIUS_OFFSET -1.2 /*cheap wonky sensor calibration offset */
+#define HUMIDITY_OFFSET 7.0     /*cheap wonky sensor calibration offset */
 #define RGB_LED_BRIGHTNESS 254 /*0..255*/
 
-#define BONJOUR false
-#define OTA_UPDATE false
+#include "DHT.h"        //temp sensor
+//#define DHTPIN 	D1      // what digital pin we're connected to		<<< on adafruit bluetooth feather board
+//#define DHTPIN D1  	  // what digital pin we're connected to		<<< one NodeMCU 1.0 board (D1==20)
+#define DHTPIN D4    	// what digital pin we're connected to		<<< on stacked wemos d1 mini
+#define DHTTYPE DHT11 	// DHT22 (white)  DHT11 (blue)
 
-//temp sensor
-#include "DHT.h"
-//#define DHTPIN 	14     // what digital pin we're connected to                <<< on adafruit bluetooth feather board
-//#define DHTPIN D1  // what digital pin we're connected to                    <<< one NodeMCU 1.0 board (D1==20)
-#define DHTPIN D4  // what digital pin we're connected to                  <<< on stacked wemos d1 mini
-
-#define DHTTYPE DHT22  // DHT22 (white)  DHT11 (blue)
 #define SPEAKER_PIN D8
+#define ONE_WIRE_BUS D4
+#define PIXEL_PIN D2
+#define RAIN_SENSOR_PIN D5
+
+// PIN Summary
+// D1 D2 > bmp sensor (pressure)
+// D2 > NeoPixel
+// D4 > DHT
+// D8 > Speaker
+// D5 > Rain Sensor
+// D4 > Dallas (Data wire is plugged into port 2 on the Arduino)
 
 // END CONFIG //////////////////////////////////////////////////////////////////////////////
 
@@ -36,8 +49,7 @@
 #if DALLAS_ENABLED
 #include <OneWire.h>
 #include <DallasTemperature.h>
-// Data wire is plugged into port 2 on the Arduino
-#define ONE_WIRE_BUS 2
+
 // Setup a oneWire instance to communicate with any OneWire devices (not just Maxim/Dallas temperature ICs)
 OneWire oneWire(ONE_WIRE_BUS);
 // Pass our oneWire reference to Dallas Temperature.
@@ -53,6 +65,7 @@ float light = 0.0f;
 float pressurePascal = 0.0f;
 float tempCelcius2 = 0.0f;
 float tempDallas = 0.0f;
+int rain = 0;
 
 int sleepMS = 500;
 int loopCounter = -1;
@@ -64,7 +77,6 @@ String ID;
 
 // WIFI ////////////////////////////////////////////////////////////////////////////////////
 
-
 #if PRESSURE_ENABLED
 #include <Adafruit_BMP085.h>
 Adafruit_BMP085 bmp;
@@ -73,7 +85,7 @@ Adafruit_BMP085 bmp;
 #if RGB_PIXEL_ENABLED
 #include <Adafruit_NeoPixel.h>
 #include <ESP8266HTTPClient.h>
-Adafruit_NeoPixel pixels = Adafruit_NeoPixel(1, D2, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel pixels = Adafruit_NeoPixel(1, PIXEL_PIN, NEO_GRB + NEO_KHZ800);
 #endif
 
 void (*resetFunc)(void) = 0;  //declare reset function at address 0
@@ -84,22 +96,26 @@ void handleRoot() {
   String str = "{\"ID\":\"" + ID + "\", \"temperature\":" + String(tempCelcius, 2) + ", \"humidity\":" + String(humidity, 2);
   
   #if DALLAS_ENABLED
-  str +=  " ,\"tempDallas\": " + String(tempDallas,2);
+  str +=  ", \"tempDallas\": " + String(tempDallas,2);
   #endif
 
   #if MIC_ENABLED
-  str +=  " ,\"loudness\": " + String(loudness,2);
+  str +=  ", \"loudness\": " + String(loudness,2);
   #endif
 
   #if PRESSURE_ENABLED
-  str +=  " ,\"pressure\": " + String(pressurePascal,2);
+  str +=  ", \"pressure\": " + String(pressurePascal,2);
   #endif
 
   #if LIGHT_ENABLED
   str +=  " ,\"light\": " + String(light,2);
   #endif
+
+  #if RAIN_SENSOR_ENABLED
+  str +=  ", \"rain\": " + String(rain);
+  #endif
   
-  str += str + " }";
+  str += " }";
 
 	server.send(200, "application/json", str.c_str());
 }
@@ -114,7 +130,6 @@ void handlePool() {
 	server.send(200, "application/json", str.c_str());
 }
 #endif
-
 
 void handleBeep() {
 	server.send(200, "text/plain", "BEEP OK\n");
@@ -136,7 +151,7 @@ void setup() {
 	Serial.println("----------------------------------------------\n");
 	ID = String(ESP.getChipId(), HEX);
 	Serial.printf("Booting %s ......\n", ID.c_str());
-	Serial.printf("HasMic:%d  HasLight:%d  HasPressure:%d  Dallas:%d  HasOTA:%d  Bonjour:%d\n", MIC_ENABLED, LIGHT_ENABLED, PRESSURE_ENABLED, DALLAS_ENABLED, OTA_UPDATE, BONJOUR);
+	Serial.printf("HasMic:%d  HasLight:%d  HasPressure:%d  Dallas:%d  RGB_Pixel:%d  Rain:%d  HasOTA:%d  Bonjour:%d\n", MIC_ENABLED, LIGHT_ENABLED, PRESSURE_ENABLED, DALLAS_ENABLED, RGB_PIXEL_ENABLED, RAIN_SENSOR_ENABLED, OTA_UPDATE, BONJOUR);
 	Serial.printf("TempSensorOffset: %.1f  HumiditySensorOffset: %.1f\n", TEMP_CELCIUS_OFFSET, HUMIDITY_OFFSET);
 	//Serial.setDebugOutput(true);
 
@@ -210,6 +225,10 @@ void setup() {
   pixels.show();
   #endif
 
+  #if RAIN_SENSOR_ENABLED
+  pinMode(RAIN_SENSOR_PIN, INPUT);
+  #endif
+
 	dht.begin();
 	delay(sleepMS / 2);
 	updateSensorData();
@@ -234,12 +253,16 @@ void loop() {
 	ArduinoOTA.handle();
   #endif
 
+  #if RAIN_SENSOR_ENABLED
+  rain = digitalRead(RAIN_SENSOR_PIN) == 0 ? 1 : 0;
+  #endif
+
   #if RGB_PIXEL_ENABLED
-    loopCounter++;
-    if(loopCounter > 10000) loopCounter = 0;
-    if(loopCounter % 60 == 0){
-      handleCo2Led();
-    }
+	loopCounter++;
+	if(loopCounter > 10000) loopCounter = 0;
+	if(loopCounter % 60 == 0){
+	  handleCo2Led();
+	}
   #endif
 }
 
@@ -253,26 +276,26 @@ void handleCo2Led(){
   pixels.setPixelColor(0, pixels.Color(0,0,0));
 
   if (httpResponseCode == 200) {
-    int co2Level = http.getString().toInt();
-    //Serial.printf("co2: %d\n", co2Level);
+	int co2Level = http.getString().toInt();
+	//Serial.printf("co2: %d\n", co2Level);
 
-    if(co2Level > 0){
-      if(co2Level < 600){
-        pixels.setPixelColor(0, pixels.Color(0,255,0));
-      }else if(co2Level < 800){
-        pixels.setPixelColor(0, pixels.Color(128,255,0));
-      }else if(co2Level < 800){
-        pixels.setPixelColor(0, pixels.Color(255,255,0));
-      }else if(co2Level < 900){
-        pixels.setPixelColor(0, pixels.Color(255,128,0));
-      }else if(co2Level < 1000){
-        pixels.setPixelColor(0, pixels.Color(255,0,0));
-      }else if(co2Level < 1100){
-        pixels.setPixelColor(0, pixels.Color(255,0,128));
-      }else{
-        pixels.setPixelColor(0, pixels.Color(255,0,255));
-      }      
-    }
+	if(co2Level > 0){
+	  if(co2Level < 600){
+		pixels.setPixelColor(0, pixels.Color(0,255,0));
+	  }else if(co2Level < 800){
+		pixels.setPixelColor(0, pixels.Color(128,255,0));
+	  }else if(co2Level < 800){
+		pixels.setPixelColor(0, pixels.Color(255,255,0));
+	  }else if(co2Level < 900){
+		pixels.setPixelColor(0, pixels.Color(255,128,0));
+	  }else if(co2Level < 1000){
+		pixels.setPixelColor(0, pixels.Color(255,0,0));
+	  }else if(co2Level < 1100){
+		pixels.setPixelColor(0, pixels.Color(255,0,128));
+	  }else{
+		pixels.setPixelColor(0, pixels.Color(255,0,255));
+	  }      
+	}
   }
   pixels.show();
 }
@@ -339,6 +362,15 @@ String GenerateMetrics() {
 	message += "\n";
   #endif
 
+  #if RAIN_SENSOR_ENABLED
+	message += "# HELP rain in range 0..1\n";
+	message += "# TYPE rain gauge\n";
+	message += "rain";
+	message += idString;
+	message += String(rain);
+	message += "\n";
+  #endif
+
 	return message;
 }
 
@@ -387,6 +419,8 @@ void updateSensorData() {
 	// Sensor readings may also be up to 2 seconds 'old' (its a very slow sensor)
 	humidity = dht.readHumidity() + HUMIDITY_OFFSET;
 	tempCelcius = dht.readTemperature() + TEMP_CELCIUS_OFFSET;
+  if(humidity > 100) humidity = 100;
+  if(humidity < 0) humidity = 0;
 
 	if (isnan(humidity) || isnan(tempCelcius)) {
 		Serial.println("Can't read from sensor! Resetting!");
