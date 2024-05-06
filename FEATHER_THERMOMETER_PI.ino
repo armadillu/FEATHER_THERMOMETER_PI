@@ -5,14 +5,14 @@
 #define OTA_UPDATE false
 //
 #define MIC_ENABLED false       /* mic connected on A0 pin */
-#define LIGHT_ENABLED false    /* light sensor connected to A0 */
-#define PRESSURE_ENABLED false /* atmospheric pressure sensor BMP085 */
+#define LIGHT_ENABLED true    /* light sensor connected to A0 */
+#define PRESSURE_ENABLED true /* atmospheric pressure sensor BMP085 */
 #define DALLAS_ENABLED false /* long wire waterproof thermometer */
 #define RGB_PIXEL_ENABLED false /* RGB led shows co2 leve of the house by querying co2 sensor through http*/
-#define RAIN_SENSOR_ENABLED false 
+#define RAIN_SENSOR_ENABLED true 
 //
-#define TEMP_CELCIUS_OFFSET -1.2 /*cheap wonky sensor calibration offset */
-#define HUMIDITY_OFFSET 7.0     /*cheap wonky sensor calibration offset */
+#define TEMP_CELCIUS_OFFSET -4.2 /*cheap wonky sensor calibration offset */
+#define HUMIDITY_OFFSET 17.0     /*cheap wonky sensor calibration offset */
 #define RGB_LED_BRIGHTNESS 254 /*0..255*/
 
 #include "DHT.h"        //temp sensor
