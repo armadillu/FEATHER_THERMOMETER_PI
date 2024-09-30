@@ -1,7 +1,6 @@
 /* Choose NodeMCU 0.9 board in arduino MENU no matter what board you have (adafruit feather, nodemcu, wemos d1 mini) */
-
 // BEGIN CONFIG ///////////////////////////////////////////////////////////////////////////
-#define HOST_NAME "ROOF"
+#define HOST_NAME "RoofTop"
 
 #define MIC_ENABLED false       /* mic connected on A0 pin */
 #define LIGHT_ENABLED false    /* light sensor connected to A0 */
@@ -9,15 +8,19 @@
 #define DALLAS_ENABLED false /* long wire waterproof thermometer */
 #define RAIN_SENSOR_ENABLED false
 #define HAS_BEEP false
+#define ARDUINO_OTA true /* allow over the air update of code */
+#define WATCHDOG_ENABLE	true
+
 //
-#define TEMP_CELCIUS_OFFSET -2.2 /*cheap wonky sensor calibration offset */
+int sleepMS = 500;
+#define TEMP_CELCIUS_OFFSET -0.0 /*cheap wonky sensor calibration offset */
 #define HUMIDITY_OFFSET 0.0     /*cheap wonky sensor calibration offset */
 
 #include "DHT.h"        //temp sensor
 //#define DHTPIN 	D1      // what digital pin we're connected to		<<< on adafruit bluetooth feather board
 //#define DHTPIN D1  	  // what digital pin we're connected to		<<< one NodeMCU 1.0 board (D1==20)
 #define DHTPIN D4    	// what digital pin we're connected to		<<< on stacked wemos d1 mini
-#define DHTTYPE DHT11 	// DHT22 (white)  DHT11 (blue)
+#define DHTTYPE DHT22 	// DHT22 (white)  DHT11 (blue)
 
 #define SPEAKER_PIN D8
 #define ONE_WIRE_BUS D4
@@ -35,6 +38,8 @@
 
 #include <SerialWebLog.h>
 #include "WifiPass.h"  //define wifi SSID & pass
+
+#include <ArduinoOTA.h>
 
 #if HAS_BEEP
 	#include "MusicalTones.h"
@@ -62,7 +67,6 @@ float tempCelcius2 = 0.0f;
 float tempDallas = 0.0f;
 int rain = 0;
 
-int sleepMS = 2000;
 int loopCounter = -1;
 
 //global devices
@@ -86,6 +90,7 @@ void setup() {
 	pinMode(A0, INPUT);
 
 	mylog.setup(HOST_NAME, ssid, password);
+	//WiFi.setSleepMode(WIFI_LIGHT_SLEEP);
 
 	mylog.print("----------------------------------------------\n");
 	ID = String(ESP.getChipId(), HEX);
@@ -126,6 +131,19 @@ void setup() {
 	dht.begin();
 	delay(sleepMS / 2);
 	updateSensorData();
+
+	#if WATCHDOG_ENABLE
+	//setup watchdog
+	ESP.wdtDisable();
+	ESP.wdtEnable(WDTO_8S);
+	mylog.print("Watchdog Enabled!\n");
+	#endif
+
+	#if ARDUINO_OTA
+	ArduinoOTA.setHostname(HOST_NAME);
+	ArduinoOTA.setRebootOnSuccess(true);
+	ArduinoOTA.begin();
+	#endif
 
 	mylog.printf("ID:%s   temperature:%f   humidity:%f\n", ID, tempCelcius, humidity);
 }
@@ -183,8 +201,12 @@ void loop() {
 
 	mylog.update();
   	updateSensorData();
-
+	
 	delay(sleepMS);  //once per second
+
+	#if WATCHDOG_ENABLE
+	ESP.wdtFeed(); //feed watchdog frequently
+	#endif
 }
 
 String GenerateMetrics() {
