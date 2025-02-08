@@ -1,30 +1,29 @@
 /* Choose NodeMCU 0.9 board in arduino MENU no matter what board you have (adafruit feather, nodemcu, wemos d1 mini) */
-// BEGIN CONFIG ///////////////////////////////////////////////////////////////////////////
-#define HOST_NAME 				"WorkshopSensor"
+#include "DHT.h"        //temp sensor
 
-#define MIC_ENABLED 			true	/* mic connected on A0 pin */
+// BEGIN CONFIG ///////////////////////////////////////////////////////////////////////////
+#define HOST_NAME 				"LivingRoom"
+
+#define MIC_ENABLED 			false	/* mic connected on A0 pin */
 #define LIGHT_ENABLED 			false	/* light sensor connected to A0 */
 #define PRESSURE_ENABLED 		false	/* atmospheric pressure sensor BMP085 */
 #define DALLAS_ENABLED 			false	/* long wire waterproof thermometer */
 #define RAIN_SENSOR_ENABLED 	false
-#define HAS_BEEP 				true
 
-int sleepMS = 200;
-#define TEMP_CELCIUS_OFFSET 	-0.9 /*cheap wonky sensor calibration offset */
-#define HUMIDITY_OFFSET 		12.0     /*cheap wonky sensor calibration offset */
+#define TEMP_CELCIUS_OFFSET 	-3.0 /*cheap wonky sensor calibration offset */
+#define HUMIDITY_OFFSET 		6.0     /*cheap wonky sensor calibration offset */
 
-#include "DHT.h"        //temp sensor
-//#define DHTPIN 	D1      // what digital pin we're connected to		<<< on adafruit bluetooth feather board
+#define DHTPIN 	D1      // what digital pin we're connected to		<<< on adafruit bluetooth feather board
 //#define DHTPIN 		D3  	  // what digital pin we're connected to		<<< one NodeMCU 1.0 board (D1==20)
-#define DHTPIN 		D4    	// what digital pin we're connected to		<<< on stacked wemos d1 mini
-#define DHTTYPE 	DHT11 	// DHT11 (blue) DHT22 (white)  
+//#define DHTPIN 		D4    	// what digital pin we're connected to		<<< on stacked wemos d1 mini
+#define DHTTYPE 	DHT22 	// DHT11 (blue) DHT22 (white)  
 
 // END CONFIG //////////////////////////////////////////////////////////////////////////////
 
 #define SPEAKER_PIN 	D8
 #define ONE_WIRE_BUS 	D4
 #define RAIN_SENSOR_PIN D5
-
+int sleepMS = 200;
 #define ARDUINO_OTA 			true /* allow over the air update of code */
 #define WATCHDOG_ENABLE			true
 
@@ -37,13 +36,9 @@ int sleepMS = 200;
 // D4 > Dallas (Data wire is plugged into port 2 on the Arduino)
 
 #include <SerialWebLog.h>
-#include "WifiPass.h"  //define wifi SSID & pass
-
 #include <ArduinoOTA.h>
-
-#if HAS_BEEP
-	#include "MusicalTones.h"
-#endif
+#include "WifiPass.h"  //define wifi SSID & pass
+#include "MusicalTones.h"
 
 #if DALLAS_ENABLED
 	#include <OneWire.h>
@@ -80,9 +75,7 @@ String ID;
 	Adafruit_BMP085 bmp;
 #endif
 
-#if HAS_BEEP
 void playTune();
-#endif
 
 void setup() {
 
@@ -95,9 +88,12 @@ void setup() {
 	mylog.print("----------------------------------------------\n");
 	ID = String(ESP.getChipId(), HEX);
 	mylog.printf("FEATHER_THERMOMETER_PI\n");
-	mylog.printf("Booting %s ......\n", ID.c_str());
-	mylog.printf("HasMic:%d  HasLight:%d  HasPressure:%d  Dallas:%d  Rain:%d  Beep:%d  DHT_Type:%d  DHT_Pin:%d\n", MIC_ENABLED, LIGHT_ENABLED, PRESSURE_ENABLED, DALLAS_ENABLED, RAIN_SENSOR_ENABLED, HAS_BEEP, DHTTYPE, DHTPIN);
+	mylog.print( "*******************************************************************\n");
+	mylog.printf("HostName: %s\n", HOST_NAME);
+	mylog.printf("HasMic:%d  HasLight:%d  HasPressure:%d  Dallas:%d  Rain:%d\n", MIC_ENABLED, LIGHT_ENABLED, PRESSURE_ENABLED, DALLAS_ENABLED, RAIN_SENSOR_ENABLED);
+	mylog.printf("DHT_Pin:%d DHT_Type:%d\n", DHTPIN, DHTTYPE);
 	mylog.printf("TempSensorOffset: %.1f  HumiditySensorOffset: %.1f\n", TEMP_CELCIUS_OFFSET, HUMIDITY_OFFSET);
+	mylog.print( "*******************************************************************\n");
 	mylog.printf("Sleep Interval: %dms\n", sleepMS);
 
 	mylog.getServer()->on("/json", handleJSON);
@@ -106,10 +102,8 @@ void setup() {
 	mylog.getServer()->on("/metrics", handleMetrics);
 	mylog.addHtmlExtraMenuOption("Metrics", "/metrics");
 	
-	#if HAS_BEEP
 	mylog.getServer()->on("/beep", handleBeep);
 	mylog.addHtmlExtraMenuOption("Beep", "/beep");
-	#endif
   
 	#if DALLAS_ENABLED
 		mylog.getServer()->on("/pool", handlePool);
@@ -133,7 +127,7 @@ void setup() {
 	dht.begin();
 	delay(2000);
 	updateSensorData();
-	mylog.printf("temp: %.1f  hum: %.1f\n", tempCelcius, humidity);
+	mylog.printf("Temp: %.1f  Hum: %.1f\n", tempCelcius, humidity);
 
 	#if WATCHDOG_ENABLE
 	//setup watchdog
@@ -153,7 +147,7 @@ void setup() {
 
 
 void handleJSON() {
-	String str = "{\"ID\":\"" + ID + "\", \"hostName\":\"" + HOST_NAME + "\", ip:\"" + WiFi.localIP().toString();
+	String str = "{\"ID\":\"" + ID + "\", \"hostName\":\"" + HOST_NAME + "\", \"ip\":\"" + WiFi.localIP().toString();
 	str += "\", \"temperature\":" + String(tempCelcius, 1) + ", \"humidity\":" + String(humidity, 0);
 
 	//wifi signal
@@ -195,19 +189,23 @@ void handlePool() {
 }
 #endif
 
-#if HAS_BEEP
 void handleBeep() {
 	mylog.getServer()->send(200, "text/plain", "BEEP OK\n");
 	playTune();
 	delay(1000);
 	playTune();
 }
-#endif
 
 void loop() {
+
 	mylog.update();
+	
 	delay(sleepMS);  //once per second
 	updateSensorData();
+
+	if(WiFi.RSSI() == 31){ //wifi cant get RSSI, some sort of error... better restart
+		ESP.restart();
+	}
 
 	#if WATCHDOG_ENABLE
 	ESP.wdtFeed(); //feed watchdog frequently
@@ -223,30 +221,30 @@ String GenerateMetrics() {
 	String message = "";
 	String idString = "{id=\"" + ID + "\",ip=\"" + WiFi.localIP().toString() + "\"}";
 
-	message += "# HELP temp Temperature in C\n";
-	message += "# TYPE temp gauge\n";
+	//message += "# HELP temp Temperature in C\n";
+	//message += "# TYPE temp gauge\n";
 	message += "temp";
 	message += idString;
 	message += String(tempCelcius, 3);
 	message += "\n";
 
-	message += "# HELP hum Relative Humidity\n";
-	message += "# TYPE hum gauge\n";
+	//message += "# HELP hum Relative Humidity\n";
+	//message += "# TYPE hum gauge\n";
 	message += "hum";
 	message += idString;
 	message += String(humidity, 3);
 	message += "\n";
 
-	message += "# HELP wifi Wifi Signal RSSI\n";
-	message += "# TYPE wifi gauge\n";
+	//message += "# HELP wifi Wifi Signal RSSI\n";
+	//message += "# TYPE wifi gauge\n";
 	message += "wifi";
 	message += idString;
 	message += String((int)WiFi.RSSI());
 	message += "\n";
 
 	#if MIC_ENABLED
-		message += "# HELP loud Microphone Loudness\n";
-		message += "# TYPE loud gauge\n";
+		//message += "# HELP loud Microphone Loudness\n";
+		//message += "# TYPE loud gauge\n";
 		message += "loud";
 		message += idString;
 		message += String(loudness, 3);
@@ -254,8 +252,8 @@ String GenerateMetrics() {
 	#endif
 
 	#if LIGHT_ENABLED
-		message += "# HELP light sensor brightness\n";
-		message += "# TYPE light gauge\n";
+		//message += "# HELP light sensor brightness\n";
+		//message += "# TYPE light gauge\n";
 		message += "light";
 		message += idString;
 		message += String(light, 3);
@@ -263,15 +261,15 @@ String GenerateMetrics() {
 	#endif
 
 	#if PRESSURE_ENABLED
-		message += "# HELP pressure Atmospheric Pressure in Pascals\n";
-		message += "# TYPE pressure gauge\n";
+		//message += "# HELP pressure Atmospheric Pressure in Pascals\n";
+		//message += "# TYPE pressure gauge\n";
 		message += "pressure";
 		message += idString;
 		message += String(pressurePascal, 3);
 		message += "\n";
 
-		message += "# HELP temp2 Temperature in C\n";
-		message += "# TYPE temp2 gauge\n";
+		//message += "# HELP temp2 Temperature in C\n";
+		//message += "# TYPE temp2 gauge\n";
 		message += "temp2";
 		message += idString;
 		message += String(tempCelcius2, 3);
@@ -279,8 +277,8 @@ String GenerateMetrics() {
 	#endif
 
 	#if DALLAS_ENABLED
-		message += "# HELP tempDallas Temperature in C\n";
-		message += "# TYPE tempDallas gauge\n";
+		//message += "# HELP tempDallas Temperature in C\n";
+		//message += "# TYPE tempDallas gauge\n";
 		message += "tempDallas";
 		message += idString;
 		message += String(tempDallas, 3);
@@ -288,8 +286,8 @@ String GenerateMetrics() {
 	#endif
 
 	#if RAIN_SENSOR_ENABLED
-		message += "# HELP rain in range 0..1\n";
-		message += "# TYPE rain gauge\n";
+		//message += "# HELP rain in range 0..1\n";
+		//message += "# TYPE rain gauge\n";
 		message += "rain";
 		message += idString;
 		message += String(rain);
@@ -311,10 +309,9 @@ void updateSensorData() {
 	if (isnan(humidity) || isnan(tempCelcius || ( (int)humidity == 0 && (int)tempCelcius == 0 ))) {
 		static bool warnedAboutDHT = false;
 		if(!warnedAboutDHT){
-			mylog.printf(" *** Can't read from DHT sensor! t:%f h:%f ***\n", humidity, tempCelcius);
+			mylog.printf(" **** Can't read from DHT sensor! t:%f h:%f ****\n", humidity, tempCelcius);
 			warnedAboutDHT = true;
 		}
-		//ESP.restart();
 	}
 
 	#if DALLAS_ENABLED
@@ -332,7 +329,7 @@ void updateSensorData() {
 	#if (MIC_ENABLED)  //calc mic input gain //////////////////////
 		int mn = 1024;
 		int mx = 0;
-		for (int i = 0; i < 512; ++i) {
+		for (int i = 0; i < 1024; ++i) {
 			int val = analogRead(A0);
 			mn = min(mn, val);
 			mx = max(mx, val);
@@ -367,7 +364,6 @@ void updateSensorData() {
 
 }
 
-#if HAS_BEEP
 void playTune() {
 
 	mylog.print("playTune()\n");
@@ -406,4 +402,3 @@ void playTune() {
 		noTone(SPEAKER_PIN);
 	}
 }
-#endif
