@@ -7,7 +7,7 @@
 #define MIC_ENABLED 		false      /* mic connected on A0 pin */
 #define LIGHT_ENABLED 		false    /* light sensor connected to A0 */
 #define PRESSURE_ENABLED 	false /* atmospheric pressure sensor BMP085 */
-#define DALLAS_ENABLED 		true    /* long wire waterproof thermometer */
+#define DALLAS_ENABLED 		false    /* long wire waterproof thermometer */
 #define RAIN_SENSOR_ENABLED false
 
 #define TEMP_CELCIUS_OFFSET -3.0 /*cheap wonky sensor calibration offset */
@@ -24,7 +24,7 @@
 #define ONE_WIRE_BUS 		D7
 #define RAIN_SENSOR_PIN 	D5
 #define ARDUINO_OTA 		true /* allow over the air update of code */
-#define WATCHDOG_ENABLE 	false
+#define WATCHDOG_ENABLE 	true
 const int sleepMS = 300;
 const int sensorDataRate = 5000; //how often to read sensor data, in ms
 
@@ -127,18 +127,8 @@ void setup() {
 	pinMode(RAIN_SENSOR_PIN, INPUT);
 	#endif
 
-	//nan prevention
-	//digitalWrite(DHTPIN, LOW); // sets output to gnd
-	//pinMode(DHTPIN, OUTPUT); // switches power to DHT on
-	//delay(1000); // delay necessary after power up for DHT to stabilize
-	
-	//sleep esp to reset DHT?
-	//ESP.deepSleep(15e6);
-
-	noInterrupts()
 	dht.begin();
 	updateSensorData();
-	interrupts();
 
 	mylog.printf("Temp: %.1f  Hum: %.1f\n", tempCelcius, humidity);
 
@@ -294,8 +284,6 @@ void updateSensorData() {
 	timeAccumulator += sleepMS;
 	if(timeAccumulator < sensorDataRate)
 		return;
-	
-	mylog.print("updating sensors...\n");
 	timeAccumulator = 0;
 
 	humidity = float(HUMIDITY_OFFSET) + dht.readHumidity(false);
